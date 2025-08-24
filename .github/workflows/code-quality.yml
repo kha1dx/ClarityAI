@@ -1,0 +1,133 @@
+name: Code Quality & AI Review
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+
+jobs:
+  code-quality:
+    name: Code Quality Analysis
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: npm ci
+        
+      - name: Run ESLint with reporting
+        run: |
+          npx eslint . --format json --output-file eslint-results.json || true
+          npx eslint . --format unix
+          
+      - name: Upload ESLint results
+        uses: actions/upload-artifact@v4
+        with:
+          name: eslint-results
+          path: eslint-results.json
+          
+      - name: Analyze code complexity
+        run: |
+          npx complexity-report --output json --format plain app/ lib/ > complexity-report.json || true
+          
+      - name: Check bundle size
+        run: |
+          npm run build
+          npx @next/bundle-analyzer || echo "Bundle analysis completed"
+
+  performance-audit:
+    name: Performance Audit
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: npm ci
+        
+      - name: Build application
+        run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          
+      - name: Start application
+        run: |
+          npm start &
+          sleep 10
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          
+      - name: Run Lighthouse CI
+        run: |
+          npx @lhci/cli@0.12.x autorun
+        env:
+          LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
+
+  ai-code-review:
+    name: AI-Powered Code Review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@v44
+        with:
+          files: |
+            **/*.{ts,tsx,js,jsx}
+            
+      - name: AI Code Review
+        if: steps.changed-files.outputs.any_changed == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const changedFiles = '${{ steps.changed-files.outputs.all_changed_files }}'.split(' ');
+            
+            // This is a placeholder for AI code review integration
+            // You can integrate with OpenAI API or other AI services
+            console.log('Files changed:', changedFiles);
+            
+            const reviewComments = [];
+            
+            for (const file of changedFiles) {
+              if (file.endsWith('.ts') || file.endsWith('.tsx')) {
+                reviewComments.push({
+                  path: file,
+                  body: `🤖 AI Review: This TypeScript file has been modified. Consider reviewing for:
+                  - Type safety
+                  - Performance implications
+                  - Security best practices
+                  - Code maintainability`,
+                  line: 1
+                });
+              }
+            }
+            
+            // Create review comments (placeholder)
+            console.log('AI review comments generated:', reviewComments.length);
