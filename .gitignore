@@ -75,3 +75,13 @@ config/secrets.json
 .env.development.local
 .env.test.local
 .env.production.local
+
+# Test files that may contain secrets/tokens
+test-*.js
+*-test.js
+test-ai-endpoints.js
+test-backend-fixed.js
+test-backend.js
+test-fixed-ai.js
+test-github-models.js
+final-ai-test.js
