@@ -1,239 +1,319 @@
 import { create } from 'zustand'
-import { devtools } from 'zustand/middleware'
-import type { 
-  ChatStore, 
-  ChatMessage, 
-  ChatConversation, 
-  UIState 
-} from '@/lib/types'
+import { persist } from 'zustand/middleware'
+import { ConversationMessage } from '@/lib/types'
 
-interface ChatStoreState extends ChatStore {}
-
-const initialUIState: UIState = {
-  isSidebarOpen: true,
-  isMobileMenuOpen: false,
-  isSettingsOpen: false,
-  searchQuery: '',
-  activeTab: 'all',
-  isLoading: false,
-  error: null
+export interface ChatMessage extends ConversationMessage {
+  status?: 'sending' | 'sent' | 'delivered' | 'read' | 'error'
+  isTyping?: boolean
+  reactions?: string[]
+  isStarred?: boolean
 }
 
-export const useChatStore = create<ChatStoreState>()(
-  devtools(
+export interface ChatConversation {
+  id: string
+  title: string
+  user_id: string
+  category?: string
+  created_at: string
+  updated_at: string
+  conversation_data: ConversationMessage[]
+  generated_prompt?: string | null
+  is_template?: boolean
+  unreadCount: number
+  isStarred: boolean
+  isArchived: boolean
+  lastMessage?: ChatMessage
+  tags: string[]
+}
+
+export interface UIState {
+  leftSidebarOpen: boolean
+  rightSidebarOpen: boolean
+  searchQuery: string
+  activeTab: 'all' | 'archived' | 'starred'
+  isMobile: boolean
+  isTyping: boolean
+  typingUsers: string[]
+}
+
+interface ChatStore {
+  // Core state
+  conversations: ChatConversation[]
+  activeConversationId: string | null
+  messages: Record<string, ChatMessage[]>
+  uiState: UIState
+  
+  // Loading states
+  isLoadingConversations: boolean
+  isLoadingMessages: boolean
+  isSendingMessage: boolean
+  
+  // Actions
+  setConversations: (conversations: ChatConversation[]) => void
+  setActiveConversation: (id: string | null) => void
+  addMessage: (conversationId: string, message: ChatMessage) => void
+  updateMessage: (conversationId: string, messageId: string, updates: Partial<ChatMessage>) => void
+  setMessages: (conversationId: string, messages: ChatMessage[]) => void
+  deleteMessage: (conversationId: string, messageId: string) => void
+  starMessage: (conversationId: string, messageId: string) => void
+  
+  // Conversation actions
+  createConversation: (conversation: ChatConversation) => void
+  updateConversation: (id: string, updates: Partial<ChatConversation>) => void
+  deleteConversation: (id: string) => void
+  starConversation: (id: string) => void
+  archiveConversation: (id: string) => void
+  markAsRead: (id: string) => void
+  
+  // UI actions
+  toggleLeftSidebar: () => void
+  toggleRightSidebar: () => void
+  setSearchQuery: (query: string) => void
+  setActiveTab: (tab: 'all' | 'archived' | 'starred') => void
+  setIsMobile: (isMobile: boolean) => void
+  setTyping: (isTyping: boolean, users?: string[]) => void
+  
+  // Computed getters
+  getActiveConversation: () => ChatConversation | null
+  getActiveMessages: () => ChatMessage[]
+  getFilteredConversations: () => ChatConversation[]
+  
+  // Loading states
+  setLoadingConversations: (loading: boolean) => void
+  setLoadingMessages: (loading: boolean) => void
+  setSendingMessage: (sending: boolean) => void
+}
+
+export const useChatStore = create<ChatStore>()(
+  persist(
     (set, get) => ({
-      // State
+      // Initial state
       conversations: [],
+      activeConversationId: null,
       messages: {},
-      currentConversationId: null,
-      uiState: initialUIState,
-
-      // Conversation Actions
-      addConversation: (conversation: ChatConversation) => {
-        set((state) => ({
-          conversations: [conversation, ...state.conversations],
-          messages: {
-            ...state.messages,
-            [conversation.id]: conversation.messages || []
-          }
-        }), false, 'addConversation')
+      uiState: {
+        leftSidebarOpen: true,
+        rightSidebarOpen: true,
+        searchQuery: '',
+        activeTab: 'all',
+        isMobile: false,
+        isTyping: false,
+        typingUsers: []
       },
-
-      updateConversation: (id: string, updates: Partial<ChatConversation>) => {
-        set((state) => ({
-          conversations: state.conversations.map((conv) =>
-            conv.id === id ? { ...conv, ...updates } : conv
-          )
-        }), false, 'updateConversation')
-      },
-
-      deleteConversation: (id: string) => {
-        set((state) => {
-          const newMessages = { ...state.messages }
-          delete newMessages[id]
-          
-          return {
-            conversations: state.conversations.filter((conv) => conv.id !== id),
-            messages: newMessages,
-            currentConversationId: state.currentConversationId === id ? null : state.currentConversationId
-          }
-        }, false, 'deleteConversation')
-      },
-
-      setCurrentConversation: (id: string | null) => {
-        set({ currentConversationId: id }, false, 'setCurrentConversation')
-      },
-
-      // Message Actions
-      addMessage: (conversationId: string, message: ChatMessage) => {
-        set((state) => ({
-          messages: {
-            ...state.messages,
-            [conversationId]: [...(state.messages[conversationId] || []), message]
-          }
-        }), false, 'addMessage')
-
-        // Update conversation's last message and unread count
-        const conversation = get().conversations.find(c => c.id === conversationId)
-        if (conversation) {
-          const isCurrentConversation = get().currentConversationId === conversationId
-          const unreadIncrement = !isCurrentConversation && message.role === 'assistant' ? 1 : 0
-          
-          get().updateConversation(conversationId, {
-            lastMessage: message,
-            unreadCount: (conversation.unreadCount || 0) + unreadIncrement
-          })
+      
+      isLoadingConversations: false,
+      isLoadingMessages: false,
+      isSendingMessage: false,
+      
+      // Actions
+      setConversations: (conversations) => set({ conversations }),
+      
+      setActiveConversation: (id) => set({ 
+        activeConversationId: id,
+        uiState: { 
+          ...get().uiState,
+          // Auto-collapse sidebars on mobile when selecting conversation
+          leftSidebarOpen: get().uiState.isMobile ? false : get().uiState.leftSidebarOpen
         }
-      },
-
-      updateMessage: (conversationId: string, messageId: string, updates: Partial<ChatMessage>) => {
-        set((state) => ({
-          messages: {
-            ...state.messages,
-            [conversationId]: (state.messages[conversationId] || []).map((msg) =>
-              msg.id === messageId ? { ...msg, ...updates } : msg
-            )
+      }),
+      
+      addMessage: (conversationId, message) => set((state) => {
+        const currentMessages = state.messages[conversationId] || []
+        const newMessages = {
+          ...state.messages,
+          [conversationId]: [...currentMessages, message]
+        }
+        
+        // Update conversation's last message and unread count
+        const conversations = state.conversations.map(conv => {
+          if (conv.id === conversationId) {
+            return {
+              ...conv,
+              lastMessage: message,
+              unreadCount: message.role === 'assistant' ? conv.unreadCount + 1 : conv.unreadCount,
+              updated_at: message.timestamp
+            }
           }
-        }), false, 'updateMessage')
-      },
+          return conv
+        })
+        
+        return {
+          messages: newMessages,
+          conversations
+        }
+      }),
+      
+      updateMessage: (conversationId, messageId, updates) => set((state) => ({
+        messages: {
+          ...state.messages,
+          [conversationId]: state.messages[conversationId]?.map(msg =>
+            msg.id === messageId ? { ...msg, ...updates } : msg
+          ) || []
+        }
+      })),
 
-      deleteMessage: (conversationId: string, messageId: string) => {
-        set((state) => ({
-          messages: {
-            ...state.messages,
-            [conversationId]: (state.messages[conversationId] || []).filter(
-              (msg) => msg.id !== messageId
-            )
-          }
-        }), false, 'deleteMessage')
+      setMessages: (conversationId, messages) => set((state) => ({
+        messages: {
+          ...state.messages,
+          [conversationId]: messages
+        }
+      })),
+      
+      deleteMessage: (conversationId, messageId) => set((state) => ({
+        messages: {
+          ...state.messages,
+          [conversationId]: state.messages[conversationId]?.filter(msg => msg.id !== messageId) || []
+        }
+      })),
+      
+      starMessage: (conversationId, messageId) => set((state) => ({
+        messages: {
+          ...state.messages,
+          [conversationId]: state.messages[conversationId]?.map(msg =>
+            msg.id === messageId ? { ...msg, isStarred: !msg.isStarred } : msg
+          ) || []
+        }
+      })),
+      
+      createConversation: (conversation) => set((state) => ({
+        conversations: [conversation, ...state.conversations]
+      })),
+      
+      updateConversation: (id, updates) => set((state) => ({
+        conversations: state.conversations.map(conv =>
+          conv.id === id ? { ...conv, ...updates } : conv
+        )
+      })),
+      
+      deleteConversation: (id) => set((state) => {
+        const { [id]: deleted, ...remainingMessages } = state.messages
+        return {
+          conversations: state.conversations.filter(conv => conv.id !== id),
+          messages: remainingMessages,
+          activeConversationId: state.activeConversationId === id ? null : state.activeConversationId
+        }
+      }),
+      
+      starConversation: (id) => set((state) => ({
+        conversations: state.conversations.map(conv =>
+          conv.id === id ? { ...conv, isStarred: !conv.isStarred } : conv
+        )
+      })),
+      
+      archiveConversation: (id) => set((state) => ({
+        conversations: state.conversations.map(conv =>
+          conv.id === id ? { ...conv, isArchived: !conv.isArchived } : conv
+        )
+      })),
+      
+      markAsRead: (id) => set((state) => ({
+        conversations: state.conversations.map(conv =>
+          conv.id === id ? { ...conv, unreadCount: 0 } : conv
+        )
+      })),
+      
+      // UI actions
+      toggleLeftSidebar: () => set((state) => ({
+        uiState: {
+          ...state.uiState,
+          leftSidebarOpen: !state.uiState.leftSidebarOpen
+        }
+      })),
+      
+      toggleRightSidebar: () => set((state) => ({
+        uiState: {
+          ...state.uiState,
+          rightSidebarOpen: !state.uiState.rightSidebarOpen
+        }
+      })),
+      
+      setSearchQuery: (query) => set((state) => ({
+        uiState: { ...state.uiState, searchQuery: query }
+      })),
+      
+      setActiveTab: (tab) => set((state) => ({
+        uiState: { ...state.uiState, activeTab: tab }
+      })),
+      
+      setIsMobile: (isMobile) => set((state) => ({
+        uiState: { 
+          ...state.uiState, 
+          isMobile,
+          // Auto-adjust sidebars for mobile
+          rightSidebarOpen: isMobile ? false : state.uiState.rightSidebarOpen
+        }
+      })),
+      
+      setTyping: (isTyping, users = []) => set((state) => ({
+        uiState: {
+          ...state.uiState,
+          isTyping,
+          typingUsers: users
+        }
+      })),
+      
+      // Loading states
+      setLoadingConversations: (loading) => set({ isLoadingConversations: loading }),
+      setLoadingMessages: (loading) => set({ isLoadingMessages: loading }),
+      setSendingMessage: (sending) => set({ isSendingMessage: sending }),
+      
+      // Computed getters
+      getActiveConversation: () => {
+        const state = get()
+        return state.conversations.find(conv => conv.id === state.activeConversationId) || null
       },
-
-      // UI Actions
-      toggleSidebar: () => {
-        set((state) => ({
-          uiState: {
-            ...state.uiState,
-            isSidebarOpen: !state.uiState.isSidebarOpen
-          }
-        }), false, 'toggleSidebar')
+      
+      getActiveMessages: () => {
+        const state = get()
+        return state.activeConversationId ? state.messages[state.activeConversationId] || [] : []
       },
-
-      setSearchQuery: (query: string) => {
-        set((state) => ({
-          uiState: {
-            ...state.uiState,
-            searchQuery: query
-          }
-        }), false, 'setSearchQuery')
-      },
-
-      setActiveTab: (tab: string) => {
-        set((state) => ({
-          uiState: {
-            ...state.uiState,
-            activeTab: tab
-          }
-        }), false, 'setActiveTab')
-      },
-
-      setLoading: (loading: boolean) => {
-        set((state) => ({
-          uiState: {
-            ...state.uiState,
-            isLoading: loading
-          }
-        }), false, 'setLoading')
-      },
-
-      setError: (error: string | null) => {
-        set((state) => ({
-          uiState: {
-            ...state.uiState,
-            error
-          }
-        }), false, 'setError')
+      
+      getFilteredConversations: () => {
+        const state = get()
+        const { searchQuery, activeTab } = state.uiState
+        
+        let filtered = state.conversations
+        
+        // Filter by tab
+        switch (activeTab) {
+          case 'archived':
+            filtered = filtered.filter(conv => conv.isArchived)
+            break
+          case 'starred':
+            filtered = filtered.filter(conv => conv.isStarred)
+            break
+          case 'all':
+          default:
+            filtered = filtered.filter(conv => !conv.isArchived)
+            break
+        }
+        
+        // Filter by search query
+        if (searchQuery && searchQuery.trim()) {
+          const query = searchQuery.toLowerCase()
+          filtered = filtered.filter(conv =>
+            conv.title.toLowerCase().includes(query) ||
+            conv.lastMessage?.content.toLowerCase().includes(query) ||
+            conv.tags.some(tag => tag.toLowerCase().includes(query))
+          )
+        }
+        
+        // Sort by last message time
+        return filtered.sort((a, b) => 
+          new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+        )
       }
     }),
     {
       name: 'chat-store',
-      // Only store essential state in localStorage
-      partialize: (state: ChatStoreState) => ({
+      partialize: (state) => ({
+        // Only persist certain parts of the state
         uiState: {
-          isSidebarOpen: state.uiState.isSidebarOpen,
+          // Don't persist leftSidebarOpen - always start with true for desktop
+          rightSidebarOpen: state.uiState.rightSidebarOpen,
           activeTab: state.uiState.activeTab
         }
       })
     }
   )
 )
-
-// Selectors for derived state
-export const useChatSelectors = () => {
-  const store = useChatStore()
-  
-  return {
-    // Get filtered conversations based on search and active tab
-    filteredConversations: () => {
-      const { conversations, uiState } = store
-      const { searchQuery, activeTab } = uiState
-      
-      let filtered = conversations
-      
-      // Filter by search query
-      if (searchQuery) {
-        const query = searchQuery.toLowerCase()
-        filtered = filtered.filter(conv => 
-          conv.title.toLowerCase().includes(query) ||
-          (conv.lastMessage?.content.toLowerCase().includes(query))
-        )
-      }
-      
-      // Filter by active tab
-      switch (activeTab) {
-        case 'starred':
-          filtered = filtered.filter(conv => conv.isStarred)
-          break
-        case 'archived':
-          filtered = filtered.filter(conv => conv.isArchived)
-          break
-        case 'unread':
-          filtered = filtered.filter(conv => (conv.unreadCount || 0) > 0)
-          break
-        case 'all':
-        default:
-          filtered = filtered.filter(conv => !conv.isArchived)
-          break
-      }
-      
-      return filtered
-    },
-
-    // Get current conversation with messages
-    currentConversationWithMessages: () => {
-      const { conversations, messages, currentConversationId } = store
-      
-      if (!currentConversationId) return null
-      
-      const conversation = conversations.find(c => c.id === currentConversationId)
-      if (!conversation) return null
-      
-      return {
-        ...conversation,
-        messages: messages[currentConversationId] || []
-      }
-    },
-
-    // Get total unread count
-    totalUnreadCount: () => {
-      const { conversations } = store
-      return conversations.reduce((total, conv) => total + (conv.unreadCount || 0), 0)
-    },
-
-    // Get typing indicators for a conversation
-    getTypingIndicators: (conversationId: string) => {
-      const { messages } = store
-      const conversationMessages = messages[conversationId] || []
-      return conversationMessages.filter(msg => msg.isTyping)
-    }
-  }
-}

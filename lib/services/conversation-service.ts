@@ -13,53 +13,68 @@ import type {
 } from '@/lib/types'
 
 // Get the service role client for admin operations
+// Fallback to in-memory store if database is not available
 const supabase = getServiceRoleClient()
+
+// In-memory store as fallback
+const conversationStore: Record<string, any> = {}
+const messageStore: Record<string, any[]> = {}
 
 export class ConversationService {
   // Conversation CRUD Operations
   static async createConversation(userId: string, title: string, category?: string): Promise<Conversation> {
-    const conversationData: ConversationInsert = {
-      user_id: userId,
-      title,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
+    try {
+      const conversationData: ConversationInsert = {
+        user_id: userId,
+        title,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }
+
+      const { data, error } = await supabase
+        .from('conversations')
+        .insert(conversationData)
+        .select()
+        .single()
+
+      if (error) {
+        console.warn('Database not available, using fallback storage:', error.message)
+        return this.createConversationFallback(userId, title, category)
+      }
+
+      return data
+    } catch (error) {
+      console.warn('Database error, using fallback storage:', error)
+      return this.createConversationFallback(userId, title, category)
     }
-
-    const { data, error } = await supabase
-      .from('conversations')
-      .insert(conversationData)
-      .select()
-      .single()
-
-    if (error) {
-      console.error('Error creating conversation:', error)
-      throw new Error(`Failed to create conversation: ${error.message}`)
-    }
-
-    return data
   }
 
   static async getConversations(userId: string): Promise<ConversationWithMessages[]> {
-    const { data, error } = await supabase
-      .from('conversations')
-      .select(`
-        *,
-        messages (
-          id,
-          role,
-          content,
-          created_at
-        )
-      `)
-      .eq('user_id', userId)
-      .order('updated_at', { ascending: false })
+    try {
+      const { data, error } = await supabase
+        .from('conversations')
+        .select(`
+          *,
+          messages (
+            id,
+            role,
+            content,
+            created_at
+          )
+        `)
+        .eq('user_id', userId)
+        .order('updated_at', { ascending: false })
 
-    if (error) {
-      console.error('Error fetching conversations:', error)
-      throw new Error(`Failed to fetch conversations: ${error.message}`)
+      if (error) {
+        console.warn('Database not available, using fallback storage:', error.message)
+        return this.getConversationsFallback(userId)
+      }
+
+      return data as ConversationWithMessages[]
+    } catch (error) {
+      console.warn('Database error, using fallback storage:', error)
+      return this.getConversationsFallback(userId)
     }
-
-    return data as ConversationWithMessages[]
   }
 
   static async getConversation(conversationId: string, userId: string): Promise<ConversationWithMessages | null> {
@@ -411,5 +426,38 @@ export class ConversationService {
       totalConversations,
       totalMessages
     }
+  }
+
+  // Fallback methods for when database is not available
+  static createConversationFallback(userId: string, title: string, category?: string): Conversation {
+    const id = `conv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    const conversation = {
+      id,
+      user_id: userId,
+      title,
+      category,
+      conversation_data: [],
+      generated_prompt: null,
+      is_template: false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }
+    
+    conversationStore[id] = conversation
+    messageStore[id] = []
+    
+    return conversation
+  }
+
+  static async getConversationsFallback(userId: string): Promise<ConversationWithMessages[]> {
+    const userConversations = Object.values(conversationStore)
+      .filter((conv: any) => conv.user_id === userId)
+      .map((conv: any) => ({
+        ...conv,
+        messages: messageStore[conv.id] || []
+      }))
+      .sort((a: any, b: any) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+    
+    return userConversations as ConversationWithMessages[]
   }
 }

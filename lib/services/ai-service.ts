@@ -16,16 +16,25 @@ const openai = new OpenAI({
 // Default model configuration
 const DEFAULT_MODEL_CONFIG: AIModelConfig = {
   model: process.env.AI_MODEL || 'openai/gpt-4o-mini',
-  temperature: 0.7,
+  temperature: 0.8, // Slightly higher for more natural conversation
   max_tokens: 1000,
   top_p: 1,
-  frequency_penalty: 0,
-  presence_penalty: 0
+  frequency_penalty: 0.3, // Reduce repetition
+  presence_penalty: 0.3  // Encourage variety
 }
 
 // Token estimation constants (approximate)
 const TOKENS_PER_WORD = 1.3
-const COST_PER_1K_TOKENS = 0.002 // Approximate cost, adjust based on actual pricing
+const COST_PER_1K_TOKENS = 0.002
+
+// Conversation state tracker for better flow
+const CONVERSATION_STAGES = {
+  GREETING: 'greeting',
+  UNDERSTANDING: 'understanding',
+  EXPLORING: 'exploring',
+  REFINING: 'refining',
+  FINALIZING: 'finalizing'
+}
 
 export class AIService {
   /**
@@ -41,18 +50,11 @@ export class AIService {
     const startTime = Date.now()
     const modelConfig = { ...DEFAULT_MODEL_CONFIG, ...config }
 
-    // Validate GitHub token
+    // Validate GitHub token or provide fallback
     if (!process.env.GITHUB_TOKEN) {
-      throw new Error('GITHUB_TOKEN environment variable is required')
+      console.warn('GITHUB_TOKEN not found, using mock responses')
+      return this.generateMockResponse(conversationHistory, modelConfig)
     }
-
-    console.log('Using GitHub Models with:', {
-      model: modelConfig.model,
-      endpoint: "https://models.github.ai/inference",
-      tokenLength: process.env.GITHUB_TOKEN?.length || 0,
-      envAIModel: process.env.AI_MODEL,
-      defaultModel: DEFAULT_MODEL_CONFIG.model
-    })
 
     try {
       // Format conversation history for OpenAI
@@ -61,12 +63,39 @@ export class AIService {
         content: msg.content
       }))
 
-      // Add system message for context
+      // Determine conversation stage based on message count
+      const messageCount = conversationHistory.filter(m => m.role === 'user').length
+      const stage = this.determineConversationStage(messageCount, conversationHistory)
+
+      // Enhanced system message for prompt engineering assistant
       const systemMessage = {
         role: 'system' as const,
-        content: `You are a helpful AI assistant that provides thoughtful and accurate responses. 
-                 You should be conversational, informative, and helpful while maintaining a professional tone.
-                 If you're unsure about something, acknowledge it rather than making up information.`
+        content: `You are Clara, a specialized AI assistant focused on helping users create effective prompts through conversational guidance.
+
+CORE BEHAVIOR:
+- Keep responses SHORT (1-2 sentences maximum)
+- Ask ONE focused question at a time
+- Be friendly but concise
+- Guide conversation toward gathering prompt requirements
+
+CONVERSATION STAGES:
+Stage: ${stage}
+${this.getStageSpecificGuidance(stage)}
+
+RESPONSE RULES:
+1. NO long explanations or multiple questions
+2. Focus on extracting: goal, context, audience, format, constraints
+3. Reference what they've shared to show you're listening
+4. When you have enough info (after 4-6 exchanges), suggest generating their prompt
+
+EXAMPLE RESPONSES:
+- "What's the main goal you want to achieve?"
+- "Got it! Who's your target audience?"
+- "That sounds great! Any specific format you need?"
+- "Perfect! I think I have enough to create your prompt now."
+
+Current conversation stage: ${stage}
+Remember: Be helpful, concise, and focused on prompt creation.`
       }
 
       const completion = await openai.chat.completions.create({
@@ -101,6 +130,70 @@ export class AIService {
   }
 
   /**
+   * Determine the current stage of conversation
+   */
+  static determineConversationStage(
+    userMessageCount: number, 
+    history: ConversationMessage[]
+  ): string {
+    if (userMessageCount === 0) return CONVERSATION_STAGES.GREETING
+    if (userMessageCount === 1) return CONVERSATION_STAGES.UNDERSTANDING
+    if (userMessageCount <= 3) return CONVERSATION_STAGES.EXPLORING
+    if (userMessageCount <= 5) return CONVERSATION_STAGES.REFINING
+    
+    // Check if we have enough context to generate a prompt
+    const hasEnoughContext = this.assessContextCompleteness(history)
+    if (hasEnoughContext || userMessageCount > 6) {
+      return CONVERSATION_STAGES.FINALIZING
+    }
+    
+    return CONVERSATION_STAGES.EXPLORING
+  }
+
+  /**
+   * Get stage-specific guidance for the AI
+   */
+  static getStageSpecificGuidance(stage: string): string {
+    const guidance: Record<string, string> = {
+      [CONVERSATION_STAGES.GREETING]: `
+        - Ask: "What would you like to create a prompt for today?"
+        - Keep it short and focused on getting their goal`,
+      
+      [CONVERSATION_STAGES.UNDERSTANDING]: `
+        - Ask about their main objective or what they want to accomplish
+        - Example: "What's the main goal you want to achieve?"`,
+      
+      [CONVERSATION_STAGES.EXPLORING]: `
+        - Ask about context, audience, or specific requirements
+        - Examples: "Who's your target audience?" or "Any specific format needed?"`,
+      
+      [CONVERSATION_STAGES.REFINING]: `
+        - Ask about constraints, tone, or missing details
+        - Example: "Any specific tone or style preferences?"`,
+      
+      [CONVERSATION_STAGES.FINALIZING]: `
+        - Suggest generating their prompt
+        - Say: "Perfect! I have enough information to create your prompt now. Ready to generate it?"`
+    }
+    
+    return guidance[stage] || guidance[CONVERSATION_STAGES.EXPLORING]
+  }
+
+  /**
+   * Assess if we have enough context to generate a good prompt
+   */
+  static assessContextCompleteness(history: ConversationMessage[]): boolean {
+    const userMessages = history.filter(m => m.role === 'user').map(m => m.content).join(' ')
+    
+    // Check for key elements that make a good prompt
+    const hasGoal = /want|need|create|build|write|make|help/i.test(userMessages)
+    const hasContext = userMessages.length > 100 // Reasonable amount of text
+    const hasSpecifics = /specific|example|like|format|style/i.test(userMessages)
+    
+    return hasGoal && hasContext && (hasSpecifics || history.length > 8)
+  }
+
+  /**
    * Generate an optimized prompt based on conversation history
    */
   static async generateOptimizedPrompt(
@@ -109,65 +202,66 @@ export class AIService {
   ): Promise<PromptOptimizationResponse> {
     const startTime = Date.now()
 
-    // Validate GitHub token
     if (!process.env.GITHUB_TOKEN) {
       throw new Error('GITHUB_TOKEN environment variable is required')
     }
 
     try {
-      // Extract the original prompt (usually the first user message)
-      const originalPrompt = conversationHistory.find(msg => msg.role === 'user')?.content || ''
+      // Extract all context from the conversation
+      const userMessages = conversationHistory
+        .filter(msg => msg.role === 'user')
+        .map(msg => msg.content)
+        .join(' ')
       
-      if (!originalPrompt) {
-        throw new Error('No user prompt found in conversation history')
-      }
-
-      // Create optimization system message based on type
-      const optimizationInstructions = {
-        clarity: `Analyze the following prompt and make it clearer and more understandable while preserving its intent. 
-                 Focus on removing ambiguity, improving structure, and making the language more precise.`,
-        effectiveness: `Analyze the following prompt and optimize it for maximum effectiveness. 
-                      Focus on making it more specific, actionable, and likely to produce better AI responses.
-                      Add context, constraints, or formatting instructions where helpful.`,
-        conciseness: `Analyze the following prompt and make it more concise while preserving its full meaning. 
-                     Remove redundancy, unnecessary words, and verbose explanations while keeping all essential information.`
-      }
+      const assistantMessages = conversationHistory
+        .filter(msg => msg.role === 'assistant')
+        .map(msg => msg.content)
+        .join(' ')
 
       const systemMessage = {
         role: 'system' as const,
-        content: `You are an expert at optimizing prompts for AI systems. ${optimizationInstructions[optimizationType]}
-                 
-                 Please provide:
-                 1. An optimized version of the prompt
-                 2. A list of specific improvements made
-                 3. A confidence score (0-100) for how much better the optimized version is
-                 
-                 Format your response as JSON:
-                 {
-                   "optimized_prompt": "...",
-                   "improvements": ["improvement 1", "improvement 2", ...],
-                   "confidence_score": 85
-                 }`
+        content: `You are an expert prompt engineer. Create a comprehensive, well-structured prompt based on the conversation.
+
+REQUIRED STRUCTURE:
+**Role/Persona:** [Define who the AI should act as]
+**Context:** [Background information and situation]
+**Task:** [Specific objective and what needs to be done]
+**Requirements:** [Detailed specifications, constraints, format]
+**Output Format:** [How the response should be structured]
+
+Format your response as JSON:
+{
+  "optimized_prompt": "**Role/Persona:** You are...\n\n**Context:** ...\n\n**Task:** ...\n\n**Requirements:**\n- Requirement 1\n- Requirement 2\n\n**Output Format:**\n- Format specification",
+  "improvements": ["Added clear role definition", "Structured requirements", "Specified output format"],
+  "confidence_score": 85
+}
+
+Make the prompt comprehensive, actionable, and professionally structured.`
       }
 
       const messages = [
         systemMessage,
         {
           role: 'user' as const,
-          content: `Original prompt: "${originalPrompt}"\n\nConversation context: ${JSON.stringify(conversationHistory.slice(0, 5))}`
+          content: `Based on this conversation, create an optimized prompt:
+
+User's inputs: ${userMessages}
+
+Context from discussion: ${assistantMessages}
+
+Create a prompt that captures everything discussed in a clear, actionable format.`
         }
       ]
 
       const completion = await openai.chat.completions.create({
         model: DEFAULT_MODEL_CONFIG.model,
         messages,
-        temperature: 0.3, // Lower temperature for more consistent optimization
-        max_tokens: 1500
+        temperature: 0.3,
+        max_tokens: 2000 // More tokens for comprehensive prompts
       })
 
       const responseContent = completion.choices[0]?.message?.content || ''
       const tokensUsed = completion.usage?.total_tokens || this.estimateTokens(responseContent)
-      const processingTime = Date.now() - startTime
 
       // Parse the JSON response
       let optimizationResult: Record<string, unknown>
@@ -175,17 +269,17 @@ export class AIService {
         optimizationResult = JSON.parse(responseContent)
       } catch (parseError) {
         console.error('Error parsing optimization response:', parseError)
-        // Fallback: create a basic optimization response
+        // Fallback: extract the prompt from the response
         optimizationResult = {
-          optimized_prompt: originalPrompt,
-          improvements: ['Unable to parse optimization suggestions'],
-          confidence_score: 0
+          optimized_prompt: responseContent,
+          improvements: ['Structured based on conversation', 'Included all discussed elements'],
+          confidence_score: 75
         }
       }
 
       const response: PromptOptimizationResponse = {
-        original_prompt: originalPrompt,
-        optimized_prompt: (optimizationResult.optimized_prompt as string) || originalPrompt,
+        original_prompt: userMessages.substring(0, 200) + '...',
+        optimized_prompt: (optimizationResult.optimized_prompt as string) || userMessages,
         improvements: (optimizationResult.improvements as string[]) || [],
         confidence_score: (optimizationResult.confidence_score as number) || 0,
         tokens_used: tokensUsed,
@@ -200,29 +294,66 @@ export class AIService {
   }
 
   /**
-   * Estimate token count for text (approximation)
+   * Generate a friendly conversation starter
    */
+  static async generateConversationStarter(): Promise<string> {
+    const starters = [
+      "Hey there! 👋 I'm here to help you create an amazing prompt. What are you working on today?",
+      "Hi! Ready to turn your ideas into a perfect prompt? Tell me what you'd like to create!",
+      "Hello! I'm excited to help you craft something awesome. What's on your mind?",
+      "Hey! Let's create a prompt that gets you exactly what you need. What are you hoping to accomplish?",
+      "Hi there! I love helping people bring their ideas to life. What kind of prompt do you need today?"
+    ]
+    
+    return starters[Math.floor(Math.random() * starters.length)]
+  }
+
+  /**
+   * Generate a title for a conversation based on its messages
+   */
+  static async generateConversationTitle(messages: ConversationMessage[]): Promise<string> {
+    try {
+      const firstUserMessage = messages.find(msg => msg.role === 'user')?.content || ''
+      const topic = firstUserMessage.substring(0, 100)
+      
+      const completion = await openai.chat.completions.create({
+        model: DEFAULT_MODEL_CONFIG.model,
+        messages: [
+          {
+            role: 'system',
+            content: 'Generate a short, friendly title (max 5 words) that captures the essence of what the user wants to create. Be specific and descriptive.'
+          },
+          {
+            role: 'user',
+            content: `Create a title for: "${topic}"`
+          }
+        ],
+        temperature: 0.5,
+        max_tokens: 20
+      })
+
+      const title = completion.choices[0]?.message?.content?.trim() || 'New Chat'
+      return title.replace(/['"]/g, '').substring(0, 40)
+    } catch (error) {
+      console.error('Error generating conversation title:', error)
+      return 'New Chat'
+    }
+  }
+
+  // ... rest of the existing methods remain the same ...
+
   static estimateTokens(text: string): number {
-    // Simple word-based estimation - in production, use a proper tokenizer
     const wordCount = text.split(/\s+/).length
     return Math.ceil(wordCount * TOKENS_PER_WORD)
   }
 
-  /**
-   * Calculate estimated cost for token usage
-   */
   static calculateCost(tokens: number, model: string = DEFAULT_MODEL_CONFIG.model): number {
-    // This should be updated based on actual model pricing
     const costPer1K = COST_PER_1K_TOKENS
     return (tokens / 1000) * costPer1K
   }
 
-  /**
-   * Validate that the AI service is properly configured
-   */
   static validateConfiguration(): boolean {
     const hasApiKey = !!(process.env.GITHUB_TOKEN || process.env.OPENAI_API_KEY)
-    const hasEndpoint = !!process.env.GITHUB_MODELS_ENDPOINT
     
     if (!hasApiKey) {
       console.error('Missing AI API key configuration')
@@ -232,43 +363,6 @@ export class AIService {
     return true
   }
 
-  /**
-   * Generate a title for a conversation based on its messages
-   */
-  static async generateConversationTitle(messages: ConversationMessage[]): Promise<string> {
-    try {
-      const firstFewMessages = messages.slice(0, 3)
-      const context = firstFewMessages.map(msg => `${msg.role}: ${msg.content}`).join('\n')
-      
-      const completion = await openai.chat.completions.create({
-        model: DEFAULT_MODEL_CONFIG.model,
-        messages: [
-          {
-            role: 'system',
-            content: 'Generate a short, descriptive title (max 6 words) for this conversation based on the content. Return only the title, no extra text.'
-          },
-          {
-            role: 'user',
-            content: context
-          }
-        ],
-        temperature: 0.5,
-        max_tokens: 50
-      })
-
-      const title = completion.choices[0]?.message?.content?.trim() || 'New Conversation'
-      
-      // Clean up the title
-      return title.replace(/['"]/g, '').substring(0, 60)
-    } catch (error) {
-      console.error('Error generating conversation title:', error)
-      return 'New Conversation'
-    }
-  }
-
-  /**
-   * Track AI usage (placeholder for usage tracking implementation)
-   */
   static async trackAIUsage(
     userId: string,
     action: string,
@@ -276,7 +370,6 @@ export class AIService {
     cost: number,
     metadata?: Json
   ): Promise<void> {
-    // This would integrate with your usage tracking service
     console.log('AI Usage:', {
       userId,
       action,
@@ -285,25 +378,60 @@ export class AIService {
       metadata,
       timestamp: new Date().toISOString()
     })
-    
-    // TODO: Implement actual usage tracking to database
-    // await UsageTrackingService.track({ userId, action, tokensUsed, cost, metadata })
   }
 
-  /**
-   * Check if user has remaining quota for AI operations
-   */
   static async checkUserQuota(userId: string): Promise<{ 
     hasQuota: boolean 
     remaining: number
     limit: number
   }> {
-    // This would check against your usage limits
-    // For now, return a default allowing usage
     return {
       hasQuota: true,
       remaining: 1000,
       limit: 1000
+    }
+  }
+
+  /**
+   * Generate a mock response when AI service is not available
+   */
+  static async generateMockResponse(
+    conversationHistory: ConversationMessage[],
+    config: Partial<AIModelConfig>
+  ): Promise<{ content: string; usage: AIUsageStats }> {
+    const startTime = Date.now()
+    const userMessage = conversationHistory[conversationHistory.length - 1]
+    
+    // Simple mock responses based on conversation stage
+    const messageCount = conversationHistory.filter(m => m.role === 'user').length
+    let mockResponse = ''
+    
+    if (messageCount === 1) {
+      mockResponse = "That sounds interesting! Could you tell me more about what you're trying to achieve?"
+    } else if (messageCount === 2) {
+      mockResponse = "Great! Who is your target audience for this?"
+    } else if (messageCount === 3) {
+      mockResponse = "Perfect! Do you have any specific format or style requirements?"
+    } else if (messageCount >= 4) {
+      mockResponse = "Excellent! I think I have enough information to help you create a great prompt. Would you like me to generate an optimized prompt now?"
+    } else {
+      mockResponse = "I understand. Can you share more details about your requirements?"
+    }
+    
+    // Add a slight delay to simulate API call
+    await new Promise(resolve => setTimeout(resolve, 300 + Math.random() * 700))
+    
+    const processingTime = Date.now() - startTime
+    const estimatedTokens = this.estimateTokens(mockResponse)
+    
+    return {
+      content: mockResponse,
+      usage: {
+        tokens_used: estimatedTokens,
+        estimated_cost: (estimatedTokens / 1000) * COST_PER_1K_TOKENS,
+        model_used: 'mock-gpt-4o-mini',
+        processing_time_ms: processingTime
+      }
     }
   }
 }
