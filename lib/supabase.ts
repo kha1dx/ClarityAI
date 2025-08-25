@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
-import { Database } from '@/types/database'
+import type { Database, Json } from '@/types/database'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -104,7 +104,7 @@ export async function addMessage(
 export async function savePromptResult(
   conversationId: string,
   generatedPrompt: string,
-  metadata?: any
+  metadata?: Json
 ) {
   const { data, error } = await supabase
     .from('prompt_results')

@@ -4,12 +4,12 @@ import { ConversationService } from '@/lib/services/conversation-service'
 // GET /api/conversations/[id] - Get a specific conversation
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { searchParams } = new URL(request.url)
     const userId = searchParams.get('userId')
-    const conversationId = params.id
+    const { id: conversationId } = await params
 
     if (!userId) {
       return NextResponse.json(
@@ -66,12 +66,12 @@ export async function GET(
 // PUT /api/conversations/[id] - Update a conversation
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { searchParams } = new URL(request.url)
     const userId = searchParams.get('userId')
-    const conversationId = params.id
+    const { id: conversationId } = await params
     
     const body = await request.json()
     const { title } = body
@@ -153,12 +153,12 @@ export async function PUT(
 // DELETE /api/conversations/[id] - Delete a conversation
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { searchParams } = new URL(request.url)
     const userId = searchParams.get('userId')
-    const conversationId = params.id
+    const { id: conversationId } = await params
 
     if (!userId) {
       return NextResponse.json(

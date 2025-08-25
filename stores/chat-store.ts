@@ -157,7 +157,7 @@ export const useChatStore = create<ChatStoreState>()(
     {
       name: 'chat-store',
       // Only store essential state in localStorage
-      partialize: (state) => ({
+      partialize: (state: ChatStoreState) => ({
         uiState: {
           isSidebarOpen: state.uiState.isSidebarOpen,
           activeTab: state.uiState.activeTab

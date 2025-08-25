@@ -5,10 +5,10 @@ import type { CreateMessageRequest } from '@/lib/types'
 // GET /api/conversations/[id]/messages - Get messages for a conversation
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const conversationId = params.id
+    const { id: conversationId } = await params
 
     if (!conversationId) {
       return NextResponse.json(
@@ -49,10 +49,10 @@ export async function GET(
 // POST /api/conversations/[id]/messages - Add a new message to a conversation
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const conversationId = params.id
+    const { id: conversationId } = await params
     const body: CreateMessageRequest = await request.json()
     const { role, content, tokensUsed = 0, cost = 0 } = body
 

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { AIService } from '@/lib/services/ai-service'
-import { ConversationService } from '@/lib/services/conversation-service'
 import type { OptimizePromptRequest } from '@/lib/types'
 
 // POST /api/ai/optimize - Optimize a prompt based on conversation history

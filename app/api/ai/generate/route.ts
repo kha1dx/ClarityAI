@@ -96,12 +96,11 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Prepare AI model configuration
-    const modelConfig = {
-      model,
-      temperature,
-      max_tokens: maxTokens
-    }
+    // Prepare AI model configuration - only include defined values
+    const modelConfig: any = {}
+    if (model) modelConfig.model = model
+    if (temperature !== undefined) modelConfig.temperature = temperature
+    if (maxTokens !== undefined) modelConfig.max_tokens = maxTokens
 
     // Generate AI response
     const response = await AIService.generateConversationResponse(

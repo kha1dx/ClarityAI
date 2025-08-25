@@ -1,4 +1,5 @@
 import OpenAI from 'openai'
+import type { Json } from '@/types/database'
 import type { 
   ConversationMessage, 
   AIModelConfig, 
@@ -6,15 +7,15 @@ import type {
   PromptOptimizationResponse 
 } from '@/lib/types'
 
-// OpenAI Client Configuration
+// OpenAI Client Configuration for GitHub Models
 const openai = new OpenAI({
-  baseURL: process.env.GITHUB_MODELS_ENDPOINT || "https://models.inference.ai.azure.com",
-  apiKey: process.env.GITHUB_TOKEN || process.env.OPENAI_API_KEY,
+  baseURL: "https://models.github.ai/inference",
+  apiKey: process.env.GITHUB_TOKEN,
 })
 
 // Default model configuration
 const DEFAULT_MODEL_CONFIG: AIModelConfig = {
-  model: process.env.AI_MODEL || 'gpt-4o',
+  model: process.env.AI_MODEL || 'openai/gpt-4o-mini',
   temperature: 0.7,
   max_tokens: 1000,
   top_p: 1,
@@ -28,7 +29,7 @@ const COST_PER_1K_TOKENS = 0.002 // Approximate cost, adjust based on actual pri
 
 export class AIService {
   /**
-   * Generate a conversation response using OpenAI
+   * Generate a conversation response using GitHub Models
    */
   static async generateConversationResponse(
     conversationHistory: ConversationMessage[],
@@ -39,6 +40,19 @@ export class AIService {
   }> {
     const startTime = Date.now()
     const modelConfig = { ...DEFAULT_MODEL_CONFIG, ...config }
+
+    // Validate GitHub token
+    if (!process.env.GITHUB_TOKEN) {
+      throw new Error('GITHUB_TOKEN environment variable is required')
+    }
+
+    console.log('Using GitHub Models with:', {
+      model: modelConfig.model,
+      endpoint: "https://models.github.ai/inference",
+      tokenLength: process.env.GITHUB_TOKEN?.length || 0,
+      envAIModel: process.env.AI_MODEL,
+      defaultModel: DEFAULT_MODEL_CONFIG.model
+    })
 
     try {
       // Format conversation history for OpenAI
@@ -94,6 +108,11 @@ export class AIService {
     optimizationType: 'clarity' | 'effectiveness' | 'conciseness' = 'effectiveness'
   ): Promise<PromptOptimizationResponse> {
     const startTime = Date.now()
+
+    // Validate GitHub token
+    if (!process.env.GITHUB_TOKEN) {
+      throw new Error('GITHUB_TOKEN environment variable is required')
+    }
 
     try {
       // Extract the original prompt (usually the first user message)
@@ -151,7 +170,7 @@ export class AIService {
       const processingTime = Date.now() - startTime
 
       // Parse the JSON response
-      let optimizationResult: any
+      let optimizationResult: Record<string, unknown>
       try {
         optimizationResult = JSON.parse(responseContent)
       } catch (parseError) {
@@ -166,9 +185,9 @@ export class AIService {
 
       const response: PromptOptimizationResponse = {
         original_prompt: originalPrompt,
-        optimized_prompt: optimizationResult.optimized_prompt || originalPrompt,
-        improvements: optimizationResult.improvements || [],
-        confidence_score: optimizationResult.confidence_score || 0,
+        optimized_prompt: (optimizationResult.optimized_prompt as string) || originalPrompt,
+        improvements: (optimizationResult.improvements as string[]) || [],
+        confidence_score: (optimizationResult.confidence_score as number) || 0,
         tokens_used: tokensUsed,
         cost: (tokensUsed / 1000) * COST_PER_1K_TOKENS
       }
@@ -255,7 +274,7 @@ export class AIService {
     action: string,
     tokensUsed: number,
     cost: number,
-    metadata?: Record<string, any>
+    metadata?: Json
   ): Promise<void> {
     // This would integrate with your usage tracking service
     console.log('AI Usage:', {

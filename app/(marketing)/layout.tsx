@@ -1,10 +1,4 @@
 import type { Metadata, Viewport } from 'next';
-import { Inter } from 'next/font/google';
-import { AuthProvider } from '@/components/auth/auth-provider';
-import { Toaster } from 'sonner';
-import './globals.css';
-
-const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
 
 const baseUrl = process.env.NODE_ENV === 'production' 
   ? 'https://promptstudio.khal1dx.com'
@@ -57,19 +51,10 @@ export const viewport: Viewport = {
   maximumScale: 5,
 };
 
-export default function RootLayout({
+export default function MarketingLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  return (
-    <html lang="en" className={inter.variable}>
-      <body className={inter.className}>
-        <AuthProvider>
-          {children}
-          <Toaster richColors position="top-right" />
-        </AuthProvider>
-      </body>
-    </html>
-  );
+  return children;
 }

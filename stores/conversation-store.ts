@@ -376,7 +376,7 @@ export const useConversationStore = create<ConversationStoreState>()(
     {
       name: 'conversation-store',
       // Only store essential state in localStorage
-      partialize: (state) => ({
+      partialize: (state: ConversationStoreState) => ({
         currentConversation: state.currentConversation
       })
     }

@@ -1,5 +1,5 @@
-// Re-export database types
-export type { 
+// Import and re-export database types
+import type { 
   Database, 
   Profile, 
   ProfileInsert, 
@@ -19,6 +19,27 @@ export type {
   ConversationComplete,
   ProfileWithConversations
 } from '@/types/database'
+
+export type { 
+  Database, 
+  Profile, 
+  ProfileInsert, 
+  ProfileUpdate,
+  Conversation,
+  ConversationInsert,
+  ConversationUpdate,
+  Message,
+  MessageInsert,
+  MessageUpdate,
+  PromptResult,
+  PromptResultInsert,
+  PromptResultUpdate,
+  MessageRole,
+  ConversationWithMessages,
+  ConversationWithPromptResults,
+  ConversationComplete,
+  ProfileWithConversations
+}
 
 // Enhanced conversation message interface
 export interface ConversationMessage {
@@ -78,7 +99,7 @@ export interface UsageLog {
   tokens_used: number
   cost: number
   timestamp: string
-  metadata?: Record<string, any>
+  metadata?: Record<string, unknown>
 }
 
 export interface UsageLimit {
@@ -138,13 +159,13 @@ export interface SubscriptionTier {
 }
 
 // API response interfaces
-export interface APIResponse<T = any> {
+export interface APIResponse<T = unknown> {
   success: boolean
   data?: T
   error?: {
     message: string
     code?: string
-    details?: any
+    details?: unknown
   }
   meta?: {
     total?: number

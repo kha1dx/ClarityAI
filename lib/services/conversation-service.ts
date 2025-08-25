@@ -1,4 +1,5 @@
 import { getServiceRoleClient } from '@/lib/supabase/server'
+import type { Json } from '@/types/database'
 import type { 
   Conversation, 
   ConversationInsert, 
@@ -197,14 +198,28 @@ export class ConversationService {
   }
 
   static async getMessage(messageId: string, userId: string): Promise<Message | null> {
+    // First verify the message exists and get the conversation_id
+    const { data: messageData, error: messageError } = await supabase
+      .from('messages')
+      .select('*, conversations(user_id)')
+      .eq('id', messageId)
+      .single()
+
+    if (messageError) {
+      if (messageError.code === 'PGRST116') return null
+      console.error('Error fetching message:', messageError)
+      throw new Error(`Failed to fetch message: ${messageError.message}`)
+    }
+
+    // Verify the user owns this conversation
+    if (messageData.conversations?.user_id !== userId) {
+      return null
+    }
+
     const { data, error } = await supabase
       .from('messages')
-      .select(`
-        *,
-        conversations!inner(user_id)
-      `)
+      .select('*')
       .eq('id', messageId)
-      .eq('conversations.user_id', userId)
       .single()
 
     if (error) {
@@ -219,15 +234,17 @@ export class ConversationService {
   }
 
   static async updateMessage(messageId: string, content: string, userId: string): Promise<Message> {
+    // First verify the user owns this message
+    const message = await this.getMessage(messageId, userId)
+    if (!message) {
+      throw new Error('Message not found or access denied')
+    }
+
     const { data, error } = await supabase
       .from('messages')
       .update({ content })
       .eq('id', messageId)
-      .select(`
-        *,
-        conversations!inner(user_id)
-      `)
-      .eq('conversations.user_id', userId)
+      .select('*')
       .single()
 
     if (error) {
@@ -255,7 +272,7 @@ export class ConversationService {
   static async savePromptResult(
     conversationId: string, 
     generatedPrompt: string, 
-    metadata?: any
+    metadata?: Json
   ): Promise<PromptResult> {
     const promptResultData: PromptResultInsert = {
       conversation_id: conversationId,
@@ -380,8 +397,8 @@ export class ConversationService {
 
     const { data: messageData, error: messageError } = await supabase
       .from('messages')
-      .select('id, conversations!inner(user_id)')
-      .eq('conversations.user_id', userId)
+      .select('id, conversations(user_id)')
+      .in('conversation_id', data.map(c => c.id))
 
     if (messageError) {
       console.error('Error fetching message stats:', messageError)
