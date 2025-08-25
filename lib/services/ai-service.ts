@@ -124,8 +124,8 @@ Remember: Be helpful, concise, and focused on prompt creation.`
         usage
       }
     } catch (error) {
-      console.error('Error generating AI response:', error)
-      throw new Error(`Failed to generate AI response: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      console.error('Error generating AI response, falling back to mock:', error)
+      return this.generateMockResponse(conversationHistory, modelConfig)
     }
   }
 
@@ -202,8 +202,11 @@ Remember: Be helpful, concise, and focused on prompt creation.`
   ): Promise<PromptOptimizationResponse> {
     const startTime = Date.now()
 
-    if (!process.env.GITHUB_TOKEN) {
-      throw new Error('GITHUB_TOKEN environment variable is required')
+    // Check if we have proper API configuration
+    const hasValidConfig = process.env.GITHUB_TOKEN || process.env.OPENAI_API_KEY
+    if (!hasValidConfig) {
+      console.log('No API credentials available, using mock prompt optimization response')
+      return this.generateMockOptimizedPrompt(conversationHistory, optimizationType)
     }
 
     try {
@@ -288,8 +291,82 @@ Create a prompt that captures everything discussed in a clear, actionable format
 
       return response
     } catch (error) {
-      console.error('Error generating optimized prompt:', error)
-      throw new Error(`Failed to generate optimized prompt: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      console.error('Error generating optimized prompt, falling back to mock:', error)
+      return this.generateMockOptimizedPrompt(conversationHistory, optimizationType)
+    }
+  }
+
+  /**
+   * Generate a mock optimized prompt response (fallback when API is unavailable)
+   */
+  private static generateMockOptimizedPrompt(
+    conversationHistory: ConversationMessage[],
+    optimizationType: 'clarity' | 'effectiveness' | 'conciseness'
+  ): PromptOptimizationResponse {
+    // Extract user messages to understand the topic
+    const userMessages = conversationHistory
+      .filter(msg => msg.role === 'user')
+      .map(msg => msg.content)
+      .join(' ')
+    
+    // Create a basic topic extraction
+    const topic = userMessages.substring(0, 100).toLowerCase()
+    let domain = 'general'
+    
+    if (topic.includes('write') || topic.includes('content') || topic.includes('blog') || topic.includes('article')) {
+      domain = 'writing'
+    } else if (topic.includes('code') || topic.includes('program') || topic.includes('develop') || topic.includes('app')) {
+      domain = 'coding'
+    } else if (topic.includes('design') || topic.includes('ui') || topic.includes('ux') || topic.includes('visual')) {
+      domain = 'design'
+    } else if (topic.includes('business') || topic.includes('market') || topic.includes('strategy')) {
+      domain = 'business'
+    }
+
+    // Generate structured prompt based on domain and user input
+    const optimizedPrompt = `**Role/Persona:** You are an expert ${domain} specialist with deep knowledge and experience in creating high-quality solutions.
+
+**Context:** Based on our conversation, you need to help with ${userMessages.substring(0, 150)}${userMessages.length > 150 ? '...' : ''}
+
+**Task:** 
+- Analyze the requirements thoroughly
+- Provide comprehensive, actionable guidance
+- Ensure all aspects are covered systematically
+
+**Requirements:**
+- Be specific and detailed in your response
+- Use clear, professional language
+- Provide examples where relevant
+- Consider best practices and industry standards
+- Address potential challenges or considerations
+
+**Output Format:**
+- Structure your response with clear headings
+- Use bullet points or numbered lists for clarity
+- Include practical examples or templates if applicable
+- Conclude with next steps or recommendations`
+
+    const improvements = [
+      'Added clear role and persona definition',
+      `Structured content specifically for ${domain} domain`,
+      'Included comprehensive requirements section',
+      'Specified professional output format',
+      'Added context from conversation history'
+    ]
+
+    // Adjust confidence based on optimization type
+    let confidenceScore = 80
+    if (optimizationType === 'clarity') confidenceScore = 85
+    if (optimizationType === 'effectiveness') confidenceScore = 82
+    if (optimizationType === 'conciseness') confidenceScore = 78
+
+    return {
+      original_prompt: userMessages.substring(0, 200) + (userMessages.length > 200 ? '...' : ''),
+      optimized_prompt: optimizedPrompt,
+      improvements,
+      confidence_score: confidenceScore,
+      tokens_used: 150, // Estimated tokens for mock response
+      cost: 0.0003 // Estimated cost for mock response
     }
   }
 

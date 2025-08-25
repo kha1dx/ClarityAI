@@ -75,8 +75,8 @@ export function ChatLayout({
           created_at: conv.created_at || new Date().toISOString(),
           updated_at: conv.updated_at || conv.created_at || new Date().toISOString(),
           unreadCount: 0,
-          isStarred: false,
-          isArchived: false,
+          isStarred: conv.is_starred || false,
+          isArchived: conv.is_archived || false,
           tags: conv?.category ? [conv.category] : []
         }))
         
@@ -115,8 +115,8 @@ export function ChatLayout({
           created_at: data.data.created_at || new Date().toISOString(),
           updated_at: data.data.updated_at || new Date().toISOString(),
           unreadCount: 0,
-          isStarred: false,
-          isArchived: false,
+          isStarred: data.data.is_starred || false,
+          isArchived: data.data.is_archived || false,
           tags: data.data?.category ? [data.data.category] : []
         }
         
@@ -131,14 +131,23 @@ export function ChatLayout({
   }
 
   const loadMessagesForConversation = async (conversationId: string) => {
+    if (!user) {
+      console.error('No user available for loading messages')
+      return
+    }
+    
     try {
-      const response = await fetch(`/api/messages?conversationId=${conversationId}`)
+      const response = await fetch(`/api/conversations/${conversationId}/messages`)
       const data = await response.json()
       
       if (data.success && data.data) {
         // Convert messages to chat store format and load them
         const chatMessages = data.data.map((msg: any) => ({
           ...msg,
+          id: msg.id,
+          role: msg.role,
+          content: msg.content,
+          timestamp: msg.created_at || msg.timestamp,
           status: 'sent'
         }))
         useChatStore.getState().setMessages(conversationId, chatMessages)
@@ -148,6 +157,8 @@ export function ChatLayout({
       }
     } catch (error) {
       console.error('Error loading messages:', error)
+      // Set empty messages array on error to prevent infinite loading states
+      useChatStore.getState().setMessages(conversationId, [])
     }
   }
 

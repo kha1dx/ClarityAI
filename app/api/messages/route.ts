@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-
-// Simple in-memory store for demo purposes
-// In production, this would be a real database
-const messageStore: Record<string, any[]> = {}
+import { ConversationService } from '@/lib/services/conversation-service'
+import { getUserIdFromRequest } from '@/lib/auth/server-auth'
 
 // GET /api/messages - Get messages for a conversation
 export async function GET(request: NextRequest) {
@@ -20,8 +18,32 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Get messages from in-memory store
-    const messages = messageStore[conversationId] || []
+    // Get authenticated user ID
+    const userId = await getUserIdFromRequest(request)
+    if (!userId) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { message: 'Authentication required' } 
+        },
+        { status: 401 }
+      )
+    }
+
+    // Verify user has access to this conversation
+    const conversation = await ConversationService.getConversation(conversationId, userId)
+    if (!conversation) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { message: 'Conversation not found or access denied' } 
+        },
+        { status: 404 }
+      )
+    }
+
+    // Get messages from Supabase
+    const messages = await ConversationService.getMessages(conversationId)
 
     return NextResponse.json({
       success: true,
@@ -51,7 +73,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { conversationId, content, role, userId } = body
+    const { conversationId, content, role, tokensUsed = 0, cost = 0 } = body
 
     // Validate required fields
     if (!conversationId || !content || !role) {
@@ -64,25 +86,38 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Create message and save to in-memory store
-    const message = {
-      id: `msg_${Date.now()}`,
+    // Get authenticated user ID
+    const userId = await getUserIdFromRequest(request)
+    if (!userId) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { message: 'Authentication required' } 
+        },
+        { status: 401 }
+      )
+    }
+
+    // Verify user has access to this conversation
+    const conversation = await ConversationService.getConversation(conversationId, userId)
+    if (!conversation) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { message: 'Conversation not found or access denied' } 
+        },
+        { status: 404 }
+      )
+    }
+
+    // Save message to Supabase
+    const message = await ConversationService.saveMessage(
       conversationId,
+      role as 'user' | 'assistant',
       content,
-      role,
-      userId,
-      timestamp: new Date().toISOString(),
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    }
-
-    // Initialize conversation array if it doesn't exist
-    if (!messageStore[conversationId]) {
-      messageStore[conversationId] = []
-    }
-
-    // Add message to the store
-    messageStore[conversationId].push(message)
+      tokensUsed,
+      cost
+    )
 
     return NextResponse.json({
       success: true,

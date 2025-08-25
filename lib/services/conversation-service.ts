@@ -162,6 +162,50 @@ export class ConversationService {
     }
   }
 
+  static async starConversation(conversationId: string, userId: string, isStarred: boolean): Promise<Conversation> {
+    const updateData: ConversationUpdate = {
+      is_starred: isStarred,
+      updated_at: new Date().toISOString()
+    }
+
+    const { data, error } = await supabase
+      .from('conversations')
+      .update(updateData)
+      .eq('id', conversationId)
+      .eq('user_id', userId)
+      .select()
+      .single()
+
+    if (error) {
+      console.error('Error starring conversation:', error)
+      throw new Error(`Failed to star conversation: ${error.message}`)
+    }
+
+    return data
+  }
+
+  static async archiveConversation(conversationId: string, userId: string, isArchived: boolean): Promise<Conversation> {
+    const updateData: ConversationUpdate = {
+      is_archived: isArchived,
+      updated_at: new Date().toISOString()
+    }
+
+    const { data, error } = await supabase
+      .from('conversations')
+      .update(updateData)
+      .eq('id', conversationId)
+      .eq('user_id', userId)
+      .select()
+      .single()
+
+    if (error) {
+      console.error('Error archiving conversation:', error)
+      throw new Error(`Failed to archive conversation: ${error.message}`)
+    }
+
+    return data
+  }
+
   // Message Operations
   static async saveMessage(
     conversationId: string, 

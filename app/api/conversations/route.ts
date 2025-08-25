@@ -1,20 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { ConversationService } from '@/lib/services/conversation-service'
+import { getUserIdFromRequest } from '@/lib/auth/server-auth'
 import type { CreateConversationRequest } from '@/lib/types'
 
 // GET /api/conversations - List conversations for a user
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url)
-    const userId = searchParams.get('userId')
+    // Get authenticated user ID - try auth first, fallback to query param for compatibility
+    let userId = await getUserIdFromRequest(request)
+    
+    // Fallback to query parameter for backward compatibility
+    if (!userId) {
+      const { searchParams } = new URL(request.url)
+      userId = searchParams.get('userId')
+    }
 
     if (!userId) {
       return NextResponse.json(
         { 
           success: false, 
-          error: { message: 'userId parameter is required' } 
+          error: { message: 'Authentication required or userId parameter is required' } 
         },
-        { status: 400 }
+        { status: 401 }
       )
     }
 
@@ -47,14 +54,22 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body: CreateConversationRequest = await request.json()
-    const { title, userId, category } = body
+    const { title: initialTitle, category } = body
+    let { userId } = body
+    const title = initialTitle
+
+    // Get authenticated user ID - prioritize auth over body param
+    const authenticatedUserId = await getUserIdFromRequest(request)
+    if (authenticatedUserId) {
+      userId = authenticatedUserId
+    }
 
     // Validate required fields
     if (!title || !userId) {
       return NextResponse.json(
         { 
           success: false, 
-          error: { message: 'title and userId are required' } 
+          error: { message: 'title and authentication are required' } 
         },
         { status: 400 }
       )

@@ -51,6 +51,7 @@ interface ChatStore {
   // Actions
   setConversations: (conversations: ChatConversation[]) => void
   setActiveConversation: (id: string | null) => void
+  loadMessagesForConversation: (conversationId: string) => Promise<void>
   addMessage: (conversationId: string, message: ChatMessage) => void
   updateMessage: (conversationId: string, messageId: string, updates: Partial<ChatMessage>) => void
   setMessages: (conversationId: string, messages: ChatMessage[]) => void
@@ -108,14 +109,55 @@ export const useChatStore = create<ChatStore>()(
       // Actions
       setConversations: (conversations) => set({ conversations }),
       
-      setActiveConversation: (id) => set({ 
-        activeConversationId: id,
-        uiState: { 
-          ...get().uiState,
-          // Auto-collapse sidebars on mobile when selecting conversation
-          leftSidebarOpen: get().uiState.isMobile ? false : get().uiState.leftSidebarOpen
+      // Load messages for active conversation when it changes
+      loadMessagesForConversation: async (conversationId: string) => {
+        const state = get()
+        if (state.messages[conversationId]) {
+          // Messages already loaded for this conversation
+          return
         }
-      }),
+        
+        state.setLoadingMessages(true)
+        try {
+          const response = await fetch(`/api/conversations/${conversationId}/messages`)
+          const data = await response.json()
+          
+          if (data.success && data.data) {
+            const chatMessages = data.data.map((msg: any) => ({
+              id: msg.id,
+              role: msg.role,
+              content: msg.content,
+              timestamp: msg.created_at || msg.timestamp,
+              status: 'sent' as const
+            }))
+            state.setMessages(conversationId, chatMessages)
+          } else {
+            state.setMessages(conversationId, [])
+          }
+        } catch (error) {
+          console.error('Error loading messages:', error)
+          state.setMessages(conversationId, [])
+        } finally {
+          state.setLoadingMessages(false)
+        }
+      },
+      
+      setActiveConversation: (id) => {
+        const state = get()
+        set({ 
+          activeConversationId: id,
+          uiState: { 
+            ...state.uiState,
+            // Auto-collapse sidebars on mobile when selecting conversation
+            leftSidebarOpen: state.uiState.isMobile ? false : state.uiState.leftSidebarOpen
+          }
+        })
+        
+        // Auto-load messages for the selected conversation
+        if (id && !state.messages[id]) {
+          state.loadMessagesForConversation(id)
+        }
+      },
       
       addMessage: (conversationId, message) => set((state) => {
         const currentMessages = state.messages[conversationId] || []
@@ -179,32 +221,263 @@ export const useChatStore = create<ChatStore>()(
         conversations: [conversation, ...state.conversations]
       })),
       
-      updateConversation: (id, updates) => set((state) => ({
-        conversations: state.conversations.map(conv =>
-          conv.id === id ? { ...conv, ...updates } : conv
-        )
-      })),
-      
-      deleteConversation: (id) => set((state) => {
-        const { [id]: deleted, ...remainingMessages } = state.messages
-        return {
-          conversations: state.conversations.filter(conv => conv.id !== id),
-          messages: remainingMessages,
-          activeConversationId: state.activeConversationId === id ? null : state.activeConversationId
+      updateConversation: async (id, updates) => {
+        // Get current user ID from existing conversation
+        const currentConv = get().conversations.find(conv => conv.id === id)
+        if (!currentConv || !currentConv.user_id) {
+          console.error('Cannot update conversation: no user ID found')
+          return
         }
-      }),
+        const userId = currentConv.user_id
+        
+        // Optimistic update - update local state immediately
+        set((state) => ({
+          conversations: state.conversations.map(conv =>
+            conv.id === id ? { ...conv, ...updates } : conv
+          )
+        }))
+
+        try {
+          // Make API call to persist the changes
+          const response = await fetch(`/api/conversations/${id}?userId=${userId}`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(updates)
+          })
+
+          if (!response.ok) {
+            throw new Error('Failed to update conversation')
+          }
+
+          const result = await response.json()
+          if (!result.success) {
+            throw new Error(result.error?.message || 'Failed to update conversation')
+          }
+
+          // Update with server response to ensure consistency
+          set((state) => ({
+            conversations: state.conversations.map(conv =>
+              conv.id === id ? { ...conv, ...result.data } : conv
+            )
+          }))
+        } catch (error) {
+          console.error('Error updating conversation:', error)
+          
+          // Rollback optimistic update on error
+          set((state) => ({
+            conversations: state.conversations.map(conv => {
+              if (conv.id === id) {
+                // Remove the optimistic updates by reverting each key
+                const reverted = { ...conv }
+                Object.keys(updates).forEach(key => {
+                  // This is a simple revert - in a real app you'd want to store the previous state
+                  if (key === 'title') reverted.title = 'Failed to update'
+                  if (key === 'isStarred') reverted.isStarred = !updates.isStarred
+                  if (key === 'isArchived') reverted.isArchived = !updates.isArchived
+                })
+                return reverted
+              }
+              return conv
+            })
+          }))
+          
+          // Could also show a toast notification here
+          console.warn('Failed to update conversation, changes reverted')
+        }
+      },
       
-      starConversation: (id) => set((state) => ({
-        conversations: state.conversations.map(conv =>
-          conv.id === id ? { ...conv, isStarred: !conv.isStarred } : conv
-        )
-      })),
+      deleteConversation: async (id) => {
+        // Get current user ID from existing conversation
+        const currentConv = get().conversations.find(conv => conv.id === id)
+        if (!currentConv || !currentConv.user_id) {
+          console.error('Cannot delete conversation: no user ID found')
+          return
+        }
+        const userId = currentConv.user_id
+        
+        // Store the conversation for potential rollback
+        const conversationToDelete = get().conversations.find(conv => conv.id === id)
+        const messagesToRestore = get().messages[id] || []
+        
+        // Optimistic update - remove from local state immediately
+        set((state) => {
+          const { [id]: deleted, ...remainingMessages } = state.messages
+          return {
+            conversations: state.conversations.filter(conv => conv.id !== id),
+            messages: remainingMessages,
+            activeConversationId: state.activeConversationId === id ? null : state.activeConversationId
+          }
+        })
+
+        try {
+          // Make API call to delete on server
+          const response = await fetch(`/api/conversations/${id}?userId=${userId}`, {
+            method: 'DELETE'
+          })
+
+          if (!response.ok) {
+            throw new Error('Failed to delete conversation')
+          }
+
+          const result = await response.json()
+          if (!result.success) {
+            throw new Error(result.error?.message || 'Failed to delete conversation')
+          }
+
+          // Successfully deleted, no need to update state (already removed optimistically)
+        } catch (error) {
+          console.error('Error deleting conversation:', error)
+          
+          // Rollback optimistic delete on error
+          if (conversationToDelete) {
+            set((state) => ({
+              conversations: [...state.conversations, conversationToDelete].sort((a, b) => 
+                new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+              ),
+              messages: {
+                ...state.messages,
+                [id]: messagesToRestore
+              },
+              activeConversationId: state.activeConversationId || id
+            }))
+          }
+          
+          // Could also show a toast notification here
+          console.warn('Failed to delete conversation, changes reverted')
+        }
+      },
       
-      archiveConversation: (id) => set((state) => ({
-        conversations: state.conversations.map(conv =>
-          conv.id === id ? { ...conv, isArchived: !conv.isArchived } : conv
-        )
-      })),
+      starConversation: async (id) => {
+        // Get current user ID from existing conversation
+        const currentConv = get().conversations.find(conv => conv.id === id)
+        if (!currentConv || !currentConv.user_id) {
+          console.error('Cannot star conversation: no user ID found')
+          return
+        }
+        const userId = currentConv.user_id
+        
+        // Get current state to determine the new starred state
+        const newIsStarred = !currentConv?.isStarred
+        
+        // Optimistic update - update local state immediately
+        set((state) => ({
+          conversations: state.conversations.map(conv =>
+            conv.id === id ? { ...conv, isStarred: newIsStarred } : conv
+          )
+        }))
+
+        try {
+          // Make API call to persist the star/unstar using the main conversation endpoint
+          const response = await fetch(`/api/conversations/${id}?userId=${userId}`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ is_starred: newIsStarred })
+          })
+
+          if (!response.ok) {
+            throw new Error('Failed to star/unstar conversation')
+          }
+
+          const result = await response.json()
+          if (!result.success) {
+            throw new Error(result.error?.message || 'Failed to star/unstar conversation')
+          }
+
+          // Update with server response to ensure consistency, mapping database fields to frontend fields
+          const updatedConv = result.data
+          set((state) => ({
+            conversations: state.conversations.map(conv =>
+              conv.id === id ? { 
+                ...conv, 
+                isStarred: updatedConv.is_starred,
+                isArchived: updatedConv.is_archived,
+                updated_at: updatedConv.updated_at
+              } : conv
+            )
+          }))
+        } catch (error) {
+          console.error('Error starring conversation:', error)
+          
+          // Rollback optimistic update on error
+          set((state) => ({
+            conversations: state.conversations.map(conv =>
+              conv.id === id ? { ...conv, isStarred: !newIsStarred } : conv
+            )
+          }))
+          
+          // Could also show a toast notification here
+          console.warn('Failed to star/unstar conversation, changes reverted')
+        }
+      },
+      
+      archiveConversation: async (id) => {
+        // Get current user ID from existing conversation
+        const currentConv = get().conversations.find(conv => conv.id === id)
+        if (!currentConv || !currentConv.user_id) {
+          console.error('Cannot archive conversation: no user ID found')
+          return
+        }
+        const userId = currentConv.user_id
+        
+        // Get current state to determine the new archived state
+        const newIsArchived = !currentConv?.isArchived
+        
+        // Optimistic update - update local state immediately
+        set((state) => ({
+          conversations: state.conversations.map(conv =>
+            conv.id === id ? { ...conv, isArchived: newIsArchived } : conv
+          )
+        }))
+
+        try {
+          // Make API call to persist the archive/unarchive using the main conversation endpoint
+          const response = await fetch(`/api/conversations/${id}?userId=${userId}`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ is_archived: newIsArchived })
+          })
+
+          if (!response.ok) {
+            throw new Error('Failed to archive/unarchive conversation')
+          }
+
+          const result = await response.json()
+          if (!result.success) {
+            throw new Error(result.error?.message || 'Failed to archive/unarchive conversation')
+          }
+
+          // Update with server response to ensure consistency, mapping database fields to frontend fields
+          const updatedConv = result.data
+          set((state) => ({
+            conversations: state.conversations.map(conv =>
+              conv.id === id ? { 
+                ...conv, 
+                isStarred: updatedConv.is_starred,
+                isArchived: updatedConv.is_archived,
+                updated_at: updatedConv.updated_at
+              } : conv
+            )
+          }))
+        } catch (error) {
+          console.error('Error archiving conversation:', error)
+          
+          // Rollback optimistic update on error
+          set((state) => ({
+            conversations: state.conversations.map(conv =>
+              conv.id === id ? { ...conv, isArchived: !newIsArchived } : conv
+            )
+          }))
+          
+          // Could also show a toast notification here
+          console.warn('Failed to archive/unarchive conversation, changes reverted')
+        }
+      },
       
       markAsRead: (id) => set((state) => ({
         conversations: state.conversations.map(conv =>

@@ -122,7 +122,7 @@ export function ChatArea({ className, onCreateConversation, onPromptGenerated }:
 
   const loadMessagesForConversation = async (conversationId: string) => {
     try {
-      const response = await fetch(`/api/messages?conversationId=${conversationId}`)
+      const response = await fetch(`/api/conversations/${conversationId}/messages`)
       const data = await response.json()
       
       if (data.success && data.data) {
@@ -175,11 +175,10 @@ export function ChatArea({ className, onCreateConversation, onPromptGenerated }:
 
       // Save user message to database
       try {
-        await fetch('/api/messages', {
+        await fetch(`/api/conversations/${activeConversationId}/messages`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            conversationId: activeConversationId,
             role: 'user',
             content: userMessage.content,
             tokensUsed: 0,
@@ -195,7 +194,7 @@ export function ChatArea({ className, onCreateConversation, onPromptGenerated }:
         const aiMessage: ChatMessage = {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
-          content: data.data?.content || data.response || 'Sorry, I couldn\'t generate a response.',
+          content: data.data?.content || 'Sorry, I couldn\'t generate a response.',
           timestamp: new Date().toISOString(),
           status: 'sent'
         }
@@ -204,15 +203,14 @@ export function ChatArea({ className, onCreateConversation, onPromptGenerated }:
         
         // Save AI message to database
         try {
-          await fetch('/api/messages', {
+          await fetch(`/api/conversations/${activeConversationId}/messages`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              conversationId: activeConversationId,
               role: 'assistant',
-              content: data.response,
-              tokensUsed: data.data?.usage?.tokens_used || data.tokensUsed || 0,
-              cost: data.data?.usage?.estimated_cost || data.cost || 0
+              content: data.data?.content || 'Sorry, I couldn\'t generate a response.',
+              tokensUsed: data.data?.usage?.tokens_used || 0,
+              cost: data.data?.usage?.estimated_cost || 0
             })
           })
         } catch (error) {
@@ -241,13 +239,6 @@ export function ChatArea({ className, onCreateConversation, onPromptGenerated }:
     }
   }
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSendMessage()
-    }
-  }
-
   const copyMessage = (content: string) => {
     navigator.clipboard.writeText(content)
     // Add toast notification here
@@ -255,7 +246,7 @@ export function ChatArea({ className, onCreateConversation, onPromptGenerated }:
 
   const handleStartConversation = async (template: string) => {
     if (onCreateConversation) {
-      await onCreateConversation()
+      onCreateConversation()
     }
     if (template.trim()) {
       setInputMessage(template)
@@ -289,14 +280,14 @@ export function ChatArea({ className, onCreateConversation, onPromptGenerated }:
 
       const data = await response.json()
       
-      if (data.success && onPromptGenerated) {
-        onPromptGenerated(data.prompt, {
-          tokensUsed: data.tokensUsed,
-          cost: data.cost,
+      if (data.success && data.data && onPromptGenerated) {
+        onPromptGenerated(data.data.optimized_prompt, {
+          tokensUsed: data.data.tokens_used,
+          cost: data.data.cost,
           category: activeConversation?.category
         })
       } else {
-        console.error('Failed to generate optimized prompt:', data.error)
+        console.error('Failed to generate optimized prompt:', data.error || 'Unknown error')
       }
     } catch (error) {
       console.error('Error generating optimized prompt:', error)
@@ -306,7 +297,14 @@ export function ChatArea({ className, onCreateConversation, onPromptGenerated }:
   }
 
   const formatMessageTime = (timestamp: string) => {
-    return formatDistanceToNow(new Date(timestamp), { addSuffix: true })
+    if (!timestamp) return 'Just now'
+    
+    const date = new Date(timestamp)
+    if (isNaN(date.getTime())) {
+      return 'Just now'
+    }
+    
+    return formatDistanceToNow(date, { addSuffix: true })
   }
 
   const MessageBubble = ({ message, isUser }: { message: ChatMessage; isUser: boolean }) => {
@@ -436,16 +434,16 @@ export function ChatArea({ className, onCreateConversation, onPromptGenerated }:
                         // Update local state immediately for better UX
                         starMessage(activeConversationId, message.id)
                         
+                        // TODO: Implement message starring API endpoint
                         // Send to API
                         try {
-                          await fetch(`/api/messages/${message.id}`, {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                              action: message.isStarred ? 'unstar' : 'star',
-                              userId: user.id
-                            })
-                          })
+                          // await fetch(`/api/conversations/${activeConversationId}/messages/${message.id}`, {
+                          //   method: 'PUT',
+                          //   headers: { 'Content-Type': 'application/json' },
+                          //   body: JSON.stringify({
+                          //     action: message.isStarred ? 'unstar' : 'star'
+                          //   })
+                          // })
                         } catch (error) {
                           // Revert local state if API call fails
                           starMessage(activeConversationId, message.id)
@@ -642,7 +640,12 @@ export function ChatArea({ className, onCreateConversation, onPromptGenerated }:
               ref={textareaRef}
               value={inputMessage}
               onChange={(e) => setInputMessage(e.target.value)}
-              onKeyPress={handleKeyPress}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  handleSendMessage()
+                }
+              }}
               placeholder="Type your message..."
               className="min-h-[44px] max-h-32 resize-none pr-12 rounded-2xl border-gray-200 focus:border-indigo-300 focus:ring-indigo-200"
               disabled={isSendingMessage}
