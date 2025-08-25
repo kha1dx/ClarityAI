@@ -98,7 +98,7 @@ export default function FeatureGrid() {
           <p className="text-gray-300 mb-8">
             Ready to create prompts that deliver better results? Join thousands of creators already using Prompt Studio.
           </p>
-          <a href="/auth/signup">
+          <a href="/signup">
             <motion.button
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}

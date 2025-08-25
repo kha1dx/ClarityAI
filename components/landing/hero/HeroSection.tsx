@@ -64,14 +64,14 @@ export default function HeroSection() {
             transition={{ delay: 0.8, duration: 0.8 }}
             className="flex flex-col sm:flex-row gap-4 justify-center items-center"
           >
-            <a href="/auth/signup">
+            <a href="/signup">
               <AnimatedButton size="lg" className="min-w-[200px]">
                 Start Creating Prompts
                 <ArrowRight size={20} />
               </AnimatedButton>
             </a>
             
-            <a href="/auth/login">
+            <a href="/login">
               <AnimatedButton variant="ghost" size="lg" className="min-w-[200px]">
                 <Play size={20} />
                 Sign In
